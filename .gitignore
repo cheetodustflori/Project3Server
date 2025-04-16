@@ -1,0 +1,14 @@
+# Maven and build files
+target/
+*.class
+
+# IDEs
+.idea/
+*.iml
+*.log
+*.iws
+
+# OS metadata
+.DS_Store
+
+

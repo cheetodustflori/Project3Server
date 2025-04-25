@@ -16,8 +16,6 @@ import javafx.stage.WindowEvent;
 
 public class GuiServer extends Application{
 
-
-	
 	
 	public static void main(String[] args) {
 		Server serv = new Server();

@@ -121,19 +121,19 @@ private void sendErrorMessage(String errorText) {
 
 
             }
-            else if(msg.getType().equals("move")) {
+            else if (msg.getType().equals("move")) {
                 GameSession currentSession = null;
                 for (GameSession session : sessions) {
                     if (session.player1 == this || session.player2 == this) {
                         currentSession = session;
                         break;
-
                     }
                 }
-                if(currentSession == null){
+                if (currentSession == null) {
                     return;
                 }
-                if(currentSession.currentTurn!=this){
+
+                if (currentSession.currentTurn != this) {
                     sendErrorMessage("Not your turn!");
                     return;
                 }
@@ -146,11 +146,21 @@ private void sendErrorMessage(String errorText) {
                 currentSession.sendToBoth(updateMessage);
 
                 // Switch turn
-                currentSession.currentTurn = (currentSession.currentTurn == currentSession.player1) ? currentSession.player2 : currentSession.player1;
 
-                // Tell next player it's their turn
-//                currentSession.currentTurn.sendMessage(new Message("yourTurn", null, "server", null));
+                currentSession.currentTurn = (currentSession.currentTurn == currentSession.player1) ? currentSession.player2 : currentSession.player1;
+                callback.accept(currentSession.currentTurn.playerObject.getUsername());
+
+                // 🔥 Tell new current player it's their turn
+                try {
+                    Message yourTurnMsg = new Message("yourTurn", true, "server", null);
+                    callback.accept(yourTurnMsg);
+                    currentSession.currentTurn.out.writeObject(yourTurnMsg);
+                    currentSession.currentTurn.out.flush();
+                } catch (IOException e) {
+                    System.err.println("Failed to notify next player for turn: " + e.getMessage());
+                }
             }
+
             // CHECK THIS
             else if (msg.getType().equals("boardUpdate")) {
                 for (GameSession session : sessions) {
@@ -211,10 +221,34 @@ private void sendErrorMessage(String errorText) {
             private final ClientThread player2;
             private ClientThread currentTurn;
 
+
+
             GameSession(ClientThread p1, ClientThread p2) {
+
+                callback.accept("GAME SESSION STARTED between " + p1.playerObject.getUsername() + " and " + p2.playerObject.getUsername());
+
                 this.player1 = p1;
                 this.player2 = p2;
                 this.currentTurn = p1;
+
+                try {
+                    Message yourTurnMsg = new Message("yourTurn", true, "server", null);
+                    callback.accept(this.player1.playerObject.getUsername() + " " + yourTurnMsg.getType());
+                    this.currentTurn.out.writeObject(yourTurnMsg);
+                    this.currentTurn.out.flush();
+
+                    Message waitTurnMsg = new Message("yourTurn", false, "server", null);
+                    callback.accept(this.player1.playerObject.getUsername() + " " + yourTurnMsg.getType());
+                    (this.currentTurn == player1 ? player2 : player1).out.writeObject(waitTurnMsg);
+                    (this.currentTurn == player1 ? player2 : player1).out.flush();
+
+
+                } catch (Exception e){
+                    System.err.println("Failed to send turn to both players: " + e.getMessage());
+                    callback.accept("Failed to send turn to both players: " + e.getMessage());
+
+                }
+
             }
 
             public void sendToBoth(Message coord) {
@@ -248,15 +282,15 @@ private void sendErrorMessage(String errorText) {
                 player1.out.flush();
                 player2.out.writeObject(partnerFound);
                 player2.out.flush();
-
-                Message yourTurnMessage = new Message("yourTurn", true, "server", null);
-                player1.out.writeObject(yourTurnMessage);
-                player1.out.flush();
-
-
-                Message waitTurnMessage = new Message("yourTurn", false, "server", null);
-                player2.out.writeObject(waitTurnMessage);
-                player2.out.flush();
+//
+//                Message yourTurnMessage = new Message("yourTurn", true, "server", null);
+//                player1.out.writeObject(yourTurnMessage);
+//                player1.out.flush();
+//
+//
+//                Message waitTurnMessage = new Message("yourTurn", false, "server", null);
+//                player2.out.writeObject(waitTurnMessage);
+//                player2.out.flush();
 
 
                 System.out.println("New game session started between " + player1.playerObject.getUsername() + " and " + player2.playerObject.getUsername());

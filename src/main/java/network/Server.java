@@ -7,10 +7,14 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.function.Consumer;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.Queue;
+
 
 public class Server {
 
-    private ArrayList<ClientThread> waitingClients = new ArrayList<>();
+    private ArrayList<String> usernames = new ArrayList<>();
+    private Queue<ClientThread> waitingClients = new ConcurrentLinkedQueue<>();
     private ArrayList<ClientThread> clients = new ArrayList<>();
     private ArrayList<ClientThread.GameSession> sessions = new ArrayList<ClientThread.GameSession>();
     private Consumer<Serializable> callback;
@@ -54,7 +58,6 @@ public class Server {
                 while (true) {
                     Socket clientSocket = serverSocket.accept();
                     ClientThread c = new ClientThread(clientSocket, count);
-                    waitingClients.add(c);
                     clients.add(c);
                     c.start();
                     count++;
@@ -94,15 +97,17 @@ public class Server {
         private void handleIncomingMessage(Message msg) {
             if (msg.getType().equals("playerInfo")) {
                 playerObject = (Player) msg.getContent();
+                String newUsername = playerObject.getUsername();
+
                 System.out.println(playerObject.getUsername() + " has joined the waiting room");
                 callback.accept( playerObject.getUsername() + " has joined the waiting room");
 
-                synchronized (waitingClients) {
-                    waitingClients.add(this);
-                    if (waitingClients.size() >= 2) {
-                        startGameWithNextTwo();
-                    }
+                waitingClients.add(this);
+                if (waitingClients.size() >= 2) {
+                    startGameWithNextTwo();
                 }
+
+
             } else if (msg.getType().equals("boardUpdate")) {
                 for (GameSession session : sessions) {
                     if (session.player1 == this || session.player2 == this) {
@@ -112,6 +117,28 @@ public class Server {
                 }
             } else if (msg.getType().equals("clientUpdate")) {
                 callback.accept(msg.getContent().toString());
+
+                String full = msg.getContent().toString();
+                String stopAt = " has logged in";
+
+                int index = full.indexOf(stopAt);
+
+                String usernameInput = full.substring(0, index);
+                for (String username : usernames) {
+                    if (username != null && username.equalsIgnoreCase(usernameInput)) {
+                        try {
+                            Message errorMsg = new Message("loginError", "Username already taken. Please choose a different name.", "server", null);
+                            callback.accept("Error: Duplicate usernames");
+                            out.writeObject(errorMsg);
+                            out.flush();
+                        } catch (Exception e) {
+                            System.err.println("Failed to send error message: " + e.getMessage());
+                            callback.accept("Failed to send error message: " + e.getMessage());
+                        }
+                        return;
+                    }
+                }
+                usernames.add(usernameInput);
             }
 
 //            catch (Exception e) {
@@ -145,8 +172,8 @@ public class Server {
         }
 
         private void startGameWithNextTwo() {
-            ClientThread player1 = waitingClients.remove(0);
-            ClientThread player2 = waitingClients.remove(1);
+            ClientThread player1 = waitingClients.poll();
+            ClientThread player2 = waitingClients.poll();
             GameSession session = new GameSession(player1, player2);
             sessions.add(session);
 
@@ -176,45 +203,31 @@ public class Server {
                 out = new ObjectOutputStream(connection.getOutputStream());
                 in = new ObjectInputStream(connection.getInputStream());
                 connection.setTcpNoDelay(true);
-            } catch (Exception e) {
-                System.out.println("Streams not open");
-                callback.accept("Streams not open");
-            }
 
-//            updateClients("new client on server: client #" + count);
-//            callback.accept("new client on server: client #" + count);
+                callback.accept("Client #" + count + " connected.");
 
-            while (true) {
-                try {
-                    Object obj = in.readObject();
+                while (true) {
+                    try {
+                        Object obj = in.readObject();
 
-                    if (obj instanceof Message msg) {
-                        handleIncomingMessage(msg);
-                    } else if (obj instanceof Player player) {
-                        // Handle Player object
-                        this.playerObject = player;
-                        System.out.println("Received Player info: " + player.getUsername());
-                        callback.accept("Received Player info: " + player.getUsername());
-
-                        synchronized (waitingClients) {
-                            waitingClients.add(this);
-                            if (waitingClients.size() >= 2) {
-                                startGameWithNextTwo();
-                            }
+                        if (obj instanceof Message msg) {
+                            handleIncomingMessage(msg);
+                        } else {
+                            System.out.println("Received unknown object: " + obj.getClass().getName());
                         }
-                    } else {
-                        System.out.println("Received unknown object type: " + obj.getClass().getName());
+                    } catch (Exception e) {
+                        System.err.println("Problem with client #" + count + ": " + e.getMessage());
+                        callback.accept("Client #" + count + " disconnected or error.");
+                        clients.remove(this);
+                        usernames.remove(this.playerObject.getUsername());
+                        break;
                     }
-                } catch (Exception e) {
-                    System.err.println(playerObject.getUsername() + " disconnected or error occurred: " + e.getMessage());
-                    callback.accept(playerObject.getUsername() + " disconnected or error occurred.");
-                    clients.remove(this);
-                    break;
                 }
+            } catch (Exception e) {
+                System.err.println("Failed to set up client #" + count);
             }
-
-
         }
+
 
 
 //            while (true) {

@@ -86,7 +86,13 @@ public class Server{
 							if (data.startsWith("USERNAME:")) {
 								username = data.substring(9); // grab the name after "USERNAME:"
 								System.out.println("Client #" + count + " set username to: " + username);
-							} else {
+							} else if (data.equals("gameOver")) {
+								System.out.println("Game over for client #" + count + ". Disconnecting...");
+								updateClients("[" + username + "] has left the server.");
+								clients.remove(this);
+								break;
+							}
+							else {
 								System.out.println("[" + username + "] says: " + data);
 								updateClients("[" + username + "]: " + data);
 							}

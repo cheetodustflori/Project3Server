@@ -1,5 +1,6 @@
 package network;
 
+import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
@@ -93,6 +94,17 @@ public class Server {
             }
         }
 
+//        helper method -- send error message
+private void sendErrorMessage(String errorText) {
+    try {
+        Message errorMsg = new Message("error", errorText, "server", null);
+        out.writeObject(errorMsg);
+        out.flush();
+    } catch (IOException e) {
+        System.err.println("Failed to send error message: " + e.getMessage());
+    }
+}
+
         // handling message type
         private void handleIncomingMessage(Message msg) {
             if (msg.getType().equals("playerInfo")) {
@@ -100,7 +112,7 @@ public class Server {
                 String newUsername = playerObject.getUsername();
 
                 System.out.println(playerObject.getUsername() + " has joined the waiting room");
-                callback.accept( playerObject.getUsername() + " has joined the waiting room");
+                callback.accept(playerObject.getUsername() + " has joined the waiting room");
 
                 waitingClients.add(this);
                 if (waitingClients.size() >= 2) {
@@ -108,16 +120,47 @@ public class Server {
                 }
 
 
-            } else if (msg.getType().equals("boardUpdate")) {
+            }
+            else if(msg.getType().equals("move")) {
+                GameSession currentSession = null;
+                for (GameSession session : sessions) {
+                    if (session.player1 == this || session.player2 == this) {
+                        currentSession = session;
+                        break;
+
+                    }
+                }
+                if(currentSession == null){
+                    return;
+                }
+                if(currentSession.currentTurn!=this){
+                    sendErrorMessage("Not your turn!");
+                    return;
+                }
+
+                int[] move = (int[]) msg.getContent();
+                int row = move[0];
+                int col = move[1];
+
+                Message updateMessage = new Message("updateMove", move, playerObject.getUsername(), null);
+                currentSession.sendToBoth(updateMessage);
+
+                // Switch turn
+                currentSession.currentTurn = (currentSession.currentTurn == currentSession.player1) ? currentSession.player2 : currentSession.player1;
+
+                // Tell next player it's their turn
+//                currentSession.currentTurn.sendMessage(new Message("yourTurn", null, "server", null));
+            }
+            // CHECK THIS
+            else if (msg.getType().equals("boardUpdate")) {
                 for (GameSession session : sessions) {
                     if (session.player1 == this || session.player2 == this) {
                         session.sendToBoth(msg);
                         break;
                     }
                 }
-            } else if (msg.getType().equals("clientUpdate")) {
-                callback.accept(msg.getContent().toString());
-
+            }
+            else if (msg.getType().equals("usernameCheck")) {
                 String full = msg.getContent().toString();
                 String stopAt = " has logged in";
 
@@ -137,8 +180,22 @@ public class Server {
                         }
                         return;
                     }
+
                 }
-                usernames.add(usernameInput);
+                try {
+                    callback.accept("Log in success! No duplicate usernames");
+                    Message success = new Message("loginSuccess", "Successful Log In", "server", null);
+                    out.writeObject(success);
+                    out.flush();
+                    usernames.add(usernameInput);
+                } catch (Exception e) {
+                    System.err.println("Failed to send success message: " + e.getMessage());
+                    callback.accept("Failed to send success message: " + e.getMessage());
+                }
+            } else if (msg.getType().equals("clientUpdate")) {
+                callback.accept(msg.getContent().toString());
+
+
             }
 
 //            catch (Exception e) {
@@ -152,21 +209,25 @@ public class Server {
         private class GameSession {
             private final ClientThread player1;
             private final ClientThread player2;
+            private ClientThread currentTurn;
 
             GameSession(ClientThread p1, ClientThread p2) {
                 this.player1 = p1;
                 this.player2 = p2;
+                this.currentTurn = p1;
             }
 
-            public void sendToBoth(Message message) {
+            public void sendToBoth(Message coord) {
                 try {
-                    player1.out.writeObject(message);
+                    String senderName = (coord.getSender() != null) ? coord.getSender() : "unknown";
+                    callback.accept("Sending move from " + senderName);
+                    player1.out.writeObject(coord);
                     player1.out.flush();
-                    player2.out.writeObject(message);
+                    player2.out.writeObject(coord);
                     player2.out.flush();
                 } catch (Exception e) {
-                    System.err.println("Failed to send to both players: " + e.getMessage());
-                    callback.accept("Failed to send to both players: " + e.getMessage());
+                    System.err.println("Failed to send board to both players: " + e.getMessage());
+                    callback.accept("Failed to send board to both players: " + e.getMessage());
                 }
             }
         }
@@ -187,6 +248,16 @@ public class Server {
                 player1.out.flush();
                 player2.out.writeObject(partnerFound);
                 player2.out.flush();
+
+                Message yourTurnMessage = new Message("yourTurn", true, "server", null);
+                player1.out.writeObject(yourTurnMessage);
+                player1.out.flush();
+
+
+                Message waitTurnMessage = new Message("yourTurn", false, "server", null);
+                player2.out.writeObject(waitTurnMessage);
+                player2.out.flush();
+
 
                 System.out.println("New game session started between " + player1.playerObject.getUsername() + " and " + player2.playerObject.getUsername());
                 callback.accept("New game session started between " + player1.playerObject.getUsername() + " and " + player2.playerObject.getUsername());
@@ -217,17 +288,18 @@ public class Server {
                         }
                     } catch (Exception e) {
                         System.err.println("Problem with client #" + count + ": " + e.getMessage());
-                        callback.accept("Client #" + count + " disconnected or error.");
+                        callback.accept("Problem with client #" + count + ": " + e.getMessage());
+                        callback.accept("Client #" + count + " : " + this.playerObject.getUsername() + " disconnected or error.");
                         clients.remove(this);
                         usernames.remove(this.playerObject.getUsername());
                         break;
                     }
                 }
             } catch (Exception e) {
+                System.err.println("ERROR: " + e.getMessage());
                 System.err.println("Failed to set up client #" + count);
             }
         }
-
 
 
 //            while (true) {
@@ -244,6 +316,8 @@ public class Server {
 //                }
 //            }
     }//end of run
+
+
 
 }
 

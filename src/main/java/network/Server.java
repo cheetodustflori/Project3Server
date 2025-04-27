@@ -97,7 +97,7 @@ public class Server {
 //        helper method -- send error message
 private void sendErrorMessage(String errorText) {
     try {
-        Message errorMsg = new Message("error", errorText, "server", null);
+        Message errorMsg = new Message(MessageType.ERROR, errorText, "server", null);
         out.writeObject(errorMsg);
         out.flush();
     } catch (IOException e) {
@@ -107,114 +107,128 @@ private void sendErrorMessage(String errorText) {
 
         // handling message type
         private void handleIncomingMessage(Message msg) {
-            if (msg.getType().equals("playerInfo")) {
-                playerObject = (Player) msg.getContent();
-                String newUsername = playerObject.getUsername();
+            if (msg == null || msg.getType() == null) return; // Safety
 
-                System.out.println(playerObject.getUsername() + " has joined the waiting room");
-                callback.accept(playerObject.getUsername() + " has joined the waiting room");
+            switch (msg.getType()) {
 
-                waitingClients.add(this);
-                if (waitingClients.size() >= 2) {
-                    startGameWithNextTwo();
-                }
+                case LOGIN:
+                case PLAYERINFO: // (If you later add PLAYERINFO separately)
+                    playerObject = (Player) msg.getContent();
+                    String newUsername = playerObject.getUsername();
 
+                    System.out.println(playerObject.getUsername() + " has joined the waiting room");
+                    callback.accept(playerObject.getUsername() + " has joined the waiting room");
 
-            }
-            else if (msg.getType().equals("move")) {
-                GameSession currentSession = null;
-                for (GameSession session : sessions) {
-                    if (session.player1 == this || session.player2 == this) {
-                        currentSession = session;
-                        break;
+                    waitingClients.add(this);
+                    if (waitingClients.size() >= 2) {
+                        startGameWithNextTwo();
                     }
-                }
-                if (currentSession == null) {
-                    return;
-                }
+                    break;
 
-                if (currentSession.currentTurn != this) {
-                    sendErrorMessage("Not your turn!");
-                    return;
-                }
-
-                int[] move = (int[]) msg.getContent();
-                int row = move[0];
-                int col = move[1];
-
-                Message updateMessage = new Message("updateMove", move, playerObject.getUsername(), null);
-                currentSession.sendToBoth(updateMessage);
-
-                // Switch turn
-
-                currentSession.currentTurn = (currentSession.currentTurn == currentSession.player1) ? currentSession.player2 : currentSession.player1;
-                callback.accept(currentSession.currentTurn.playerObject.getUsername());
-
-                // 🔥 Tell new current player it's their turn
-                try {
-                    Message yourTurnMsg = new Message("yourTurn", true, "server", null);
-                    callback.accept(yourTurnMsg);
-                    currentSession.currentTurn.out.writeObject(yourTurnMsg);
-                    currentSession.currentTurn.out.flush();
-                } catch (IOException e) {
-                    System.err.println("Failed to notify next player for turn: " + e.getMessage());
-                }
-            }
-
-            // CHECK THIS
-            else if (msg.getType().equals("boardUpdate")) {
-                for (GameSession session : sessions) {
-                    if (session.player1 == this || session.player2 == this) {
-                        session.sendToBoth(msg);
-                        break;
-                    }
-                }
-            }
-            else if (msg.getType().equals("usernameCheck")) {
-                String full = msg.getContent().toString();
-                String stopAt = " has logged in";
-
-                int index = full.indexOf(stopAt);
-
-                String usernameInput = full.substring(0, index);
-                for (String username : usernames) {
-                    if (username != null && username.equalsIgnoreCase(usernameInput)) {
-                        try {
-                            Message errorMsg = new Message("loginError", "Username already taken. Please choose a different name.", "server", null);
-                            callback.accept("Error: Duplicate usernames");
-                            out.writeObject(errorMsg);
-                            out.flush();
-                        } catch (Exception e) {
-                            System.err.println("Failed to send error message: " + e.getMessage());
-                            callback.accept("Failed to send error message: " + e.getMessage());
+                case GAMEMOVE:
+//                case MOVE:   // in case you ever split it out
+                    GameSession currentSession = null;
+                    for (GameSession session : sessions) {
+                        if (session.player1 == this || session.player2 == this) {
+                            currentSession = session;
+                            break;
                         }
+                    }
+                    if (currentSession == null) return;
+
+                    if (currentSession.currentTurn != this) {
+                        sendErrorMessage("Not your turn!");
                         return;
                     }
 
-                }
-                try {
-                    callback.accept("Log in success! No duplicate usernames");
-                    Message success = new Message("loginSuccess", "Successful Log In", "server", null);
-                    out.writeObject(success);
-                    out.flush();
-                    usernames.add(usernameInput);
-                } catch (Exception e) {
-                    System.err.println("Failed to send success message: " + e.getMessage());
-                    callback.accept("Failed to send success message: " + e.getMessage());
-                }
-            } else if (msg.getType().equals("clientUpdate")) {
-                callback.accept(msg.getContent().toString());
+                    int[] move = (int[]) msg.getContent();
+                    int row = move[0];
+                    int col = move[1];
+
+                    Message updateMessage = new Message(MessageType.UPDATEMOVE, move, playerObject.getUsername(), null);
+                    currentSession.sendToBoth(updateMessage);
+
+                    // Switch turn
+                    currentSession.currentTurn = (currentSession.currentTurn == currentSession.player1) ? currentSession.player2 : currentSession.player1;
+                    callback.accept(currentSession.currentTurn.playerObject.getUsername());
+
+                    // Notify new player it's their turn
+                    try {
+                        Message yourTurnMsg = new Message(MessageType.YOURTURN, true, "server", null);
+                        currentSession.currentTurn.out.writeObject(yourTurnMsg);
+                        currentSession.currentTurn.out.flush();
+                    } catch (IOException e) {
+                        System.err.println("Failed to notify next player: " + e.getMessage());
+                    }
+                    break;
+
+                case BOARDUPDATE:
+                    for (GameSession session : sessions) {
+                        if (session.player1 == this || session.player2 == this) {
+                            session.sendToBoth(msg);
+                            break;
+                        }
+                    }
+                    break;
+
+                case USERNAMECHECK:
+                    String full = msg.getContent().toString();
+                    String stopAt = " has logged in";
+
+                    int index = full.indexOf(stopAt);
+                    if (index == -1) {
+                        sendErrorMessage("Invalid username format.");
+                        return;
+                    }
+
+                    String usernameInput = full.substring(0, index);
+                    for (String username : usernames) {
+                        if (username != null && username.equalsIgnoreCase(usernameInput)) {
+                            try {
+                                Message errorMsg = new Message(MessageType.LOGINERROR, "Username already taken. Please choose a different name.", "server", null);
+                                callback.accept("Error: Duplicate usernames");
+                                out.writeObject(errorMsg);
+                                out.flush();
+                            } catch (Exception e) {
+                                System.err.println("Failed to send error message: " + e.getMessage());
+                                callback.accept("Failed to send error message: " + e.getMessage());
+                            }
+                            return;
+                        }
+                    }
+                    try {
+                        callback.accept("Log in success! No duplicate usernames");
+                        Message success = new Message(MessageType.LOGINSUCCESS, "Successful Log In", "server", null);
+                        out.writeObject(success);
+                        out.flush();
+                        usernames.add(usernameInput);
+                    } catch (Exception e) {
+                        System.err.println("Failed to send success message: " + e.getMessage());
+                        callback.accept("Failed to send success message: " + e.getMessage());
+                    }
+                    break;
+
+                case TEXT:
+                    callback.accept(msg.getContent().toString());
+                    break;
+
+                case CHAT:
+                        // Just forward the chat to both players in the same session
+                        for (GameSession session : sessions) {
+                            if (session.player1 == this || session.player2 == this) {
+                                session.sendChatToBoth(msg);
+                                break;
+                            }
+                        }
 
 
+
+                default:
+                    System.out.println("Unknown message type from client: " + msg.getType());
+                    break;
             }
-
-//            catch (Exception e) {
-//                System.err.println("Client" + count + "disconnected.");
-//                callback.accept("Client" + count + "disconnected.");
-//                clients.remove(this);
-//                break;
-//            }
         }
+
 
         private class GameSession {
             private final ClientThread player1;
@@ -232,12 +246,12 @@ private void sendErrorMessage(String errorText) {
                 this.currentTurn = p1;
 
                 try {
-                    Message yourTurnMsg = new Message("yourTurn", true, "server", null);
+                    Message yourTurnMsg = new Message(MessageType.YOURTURN, true, "server", null);
                     callback.accept(this.player1.playerObject.getUsername() + " " + yourTurnMsg.getType());
                     this.currentTurn.out.writeObject(yourTurnMsg);
                     this.currentTurn.out.flush();
 
-                    Message waitTurnMsg = new Message("yourTurn", false, "server", null);
+                    Message waitTurnMsg = new Message(MessageType.YOURTURN, false, "server", null);
                     callback.accept(this.player1.playerObject.getUsername() + " " + yourTurnMsg.getType());
                     (this.currentTurn == player1 ? player2 : player1).out.writeObject(waitTurnMsg);
                     (this.currentTurn == player1 ? player2 : player1).out.flush();
@@ -254,7 +268,7 @@ private void sendErrorMessage(String errorText) {
             public void sendToBoth(Message coord) {
                 try {
                     String senderName = (coord.getSender() != null) ? coord.getSender() : "unknown";
-                    callback.accept("Sending move from " + senderName);
+                    callback.accept("Sending message from " + senderName);
                     player1.out.writeObject(coord);
                     player1.out.flush();
                     player2.out.writeObject(coord);
@@ -262,6 +276,21 @@ private void sendErrorMessage(String errorText) {
                 } catch (Exception e) {
                     System.err.println("Failed to send board to both players: " + e.getMessage());
                     callback.accept("Failed to send board to both players: " + e.getMessage());
+                }
+            }
+
+            public void sendChatToBoth(Message chat) {
+                try {
+                    String senderName = (chat.getSender() != null) ? chat.getSender() : "unknown";
+                    callback.accept("Message from " + senderName + ": " + chat);
+                    Message outputChat = new Message(MessageType.CHAT, chat, chat.getSender(), null);
+                    player1.out.writeObject(outputChat);
+                    player1.out.flush();
+                    player2.out.writeObject(outputChat);
+                    player2.out.flush();
+                } catch (Exception e) {
+                    System.err.println("Failed to send chat to both players: " + e.getMessage());
+                    callback.accept("Failed to send chat to both players: " + e.getMessage());
                 }
             }
         }
@@ -277,7 +306,7 @@ private void sendErrorMessage(String errorText) {
                 players.add(player1.playerObject);
                 players.add(player2.playerObject);
 
-                Message partnerFound = new Message("partnerFound", players, "server", null);
+                Message partnerFound = new Message(MessageType.PARTNERFOUND, players, "server", null);
                 player1.out.writeObject(partnerFound);
                 player1.out.flush();
                 player2.out.writeObject(partnerFound);

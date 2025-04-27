@@ -1,7 +1,8 @@
 GuiServer.class
 network/Server.class
 network/Player.class
+network/Server$ClientThread$GameSession.class
 network/Message.class
-network/Server$GameSession.class
+GuiServer$1.class
 network/Server$ClientThread.class
 network/Server$TheServer.class
